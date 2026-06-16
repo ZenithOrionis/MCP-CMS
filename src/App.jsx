@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Octokit } from '@octokit/rest';
-import { Save, LogIn, RefreshCw, CheckCircle, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Save, LogIn, RefreshCw, CheckCircle, AlertCircle, Eye, EyeOff, Upload, Image as ImageIcon } from 'lucide-react';
 
 const REPO_OWNER = 'ZenithOrionis';
 const REPO_NAME = 'MCP';
@@ -30,7 +30,6 @@ export default function App() {
     const client = new Octokit({ auth: token });
     
     try {
-      // Verify token works by getting user
       await client.rest.users.getAuthenticated();
       
       setOctokit(client);
@@ -38,7 +37,6 @@ export default function App() {
       setIsAuthenticated(true);
       setMessage({ text: 'Successfully authenticated!', type: 'success' });
       
-      // Fetch data
       fetchData(client);
     } catch (err) {
       setMessage({ text: 'Invalid token or insufficient permissions.', type: 'error' });
@@ -64,7 +62,6 @@ export default function App() {
         path: FILE_PATH,
       });
 
-      // GitHub returns base64 encoded content
       const content = atob(response.data.content);
       setData(JSON.parse(content));
       setFileSha(response.data.sha);
@@ -114,6 +111,65 @@ export default function App() {
         [field]: value
       }
     }));
+  };
+
+  const updateArrayField = (section, arrayName, index, field, value) => {
+    setData((prev) => {
+      const newArray = [...prev[section][arrayName]];
+      newArray[index] = { ...newArray[index], [field]: value };
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          [arrayName]: newArray
+        }
+      };
+    });
+  };
+
+  const handleImageUpload = async (file, fileName, githubFolder) => {
+    if (!octokit) return null;
+    setMessage({ text: `Uploading ${fileName}...`, type: 'info' });
+    
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        try {
+          const base64Content = reader.result.split(',')[1];
+          const path = `public/${githubFolder}/${fileName}`;
+          
+          let sha = null;
+          try {
+            const res = await octokit.rest.repos.getContent({
+              owner: REPO_OWNER,
+              repo: REPO_NAME,
+              path: path
+            });
+            sha = res.data.sha;
+          } catch (e) {
+            // File doesn't exist yet, ignore
+          }
+          
+          await octokit.rest.repos.createOrUpdateFileContents({
+            owner: REPO_OWNER,
+            repo: REPO_NAME,
+            path: path,
+            message: `cms: upload image ${fileName}`,
+            content: base64Content,
+            ...(sha ? { sha } : {})
+          });
+          
+          setMessage({ text: `Successfully uploaded ${fileName}!`, type: 'success' });
+          resolve(`/${githubFolder}/${fileName}`);
+        } catch (e) {
+          console.error(e);
+          setMessage({ text: `Failed to upload ${fileName}.`, type: 'error' });
+          reject(e);
+        }
+      };
+      reader.onerror = (e) => reject(e);
+    });
   };
 
   if (!isAuthenticated) {
@@ -184,6 +240,9 @@ export default function App() {
   const tabs = [
     { id: 'hero', label: 'Hero Section' },
     { id: 'about', label: 'About Us' },
+    { id: 'partners', label: 'Partners (Logos)' },
+    { id: 'portfolio', label: 'Portfolio Images' },
+    { id: 'leadership', label: 'Leadership Photos' },
     { id: 'contact', label: 'Contact Info' },
   ];
 
@@ -222,7 +281,7 @@ export default function App() {
             className="fixed md:static bottom-6 right-6 z-10 shadow-lg md:shadow-none bg-mint text-forest px-6 py-3 rounded-full md:rounded-lg font-bold hover:bg-mint/90 transition flex items-center gap-2 disabled:opacity-50"
           >
             {saving ? <RefreshCw className="animate-spin" size={20} /> : <Save size={20} />}
-            {saving ? 'Saving...' : 'Publish Changes'}
+            {saving ? 'Saving...' : 'Publish JSON Changes'}
           </button>
         </div>
 
@@ -234,7 +293,6 @@ export default function App() {
         )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-sage/20 p-6 md:p-8 space-y-6">
-          {/* Form Fields base on activeTab */}
           
           {activeTab === 'hero' && (
             <>
@@ -270,6 +328,84 @@ export default function App() {
             </>
           )}
 
+          {activeTab === 'partners' && (
+            <div className="space-y-8">
+              {data.partners.logos.map((logo, index) => (
+                <div key={index} className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border border-sage/20 rounded-xl bg-cream/10">
+                  <div>
+                    <Field label="Partner Name" value={logo.name} onChange={(val) => updateArrayField('partners', 'logos', index, 'name', val)} />
+                    <p className="text-xs text-sage mt-2">Current path: {logo.imgSrc}</p>
+                  </div>
+                  <div>
+                    <ImageUploadField 
+                      label="Upload Logo" 
+                      currentImg={logo.imgSrc}
+                      onUpload={(file) => {
+                        const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]/g, '-');
+                        return handleImageUpload(file, safeName, 'partners').then(path => {
+                          updateArrayField('partners', 'logos', index, 'imgSrc', path);
+                        });
+                      }} 
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'portfolio' && (
+            <div className="space-y-8">
+              {data.portfolio.items.map((item, index) => (
+                <div key={index} className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border border-sage/20 rounded-xl bg-cream/10">
+                  <div>
+                    <Field label="Item Title" value={item.title} onChange={(val) => updateArrayField('portfolio', 'items', index, 'title', val)} />
+                    <div className="mt-4">
+                      <Field label="Category" value={item.category} onChange={(val) => updateArrayField('portfolio', 'items', index, 'category', val)} />
+                    </div>
+                  </div>
+                  <div>
+                    <ImageUploadField 
+                      label="Upload Portfolio Image" 
+                      currentImg={item.imgSrc}
+                      onUpload={(file) => {
+                        const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]/g, '-');
+                        return handleImageUpload(file, `portfolio-${item.id}-${safeName}`, 'portfolio').then(path => {
+                          updateArrayField('portfolio', 'items', index, 'imgSrc', path);
+                        });
+                      }} 
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'leadership' && (
+            <div className="space-y-8">
+              {data.leadership.items.map((person, index) => (
+                <div key={index} className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 border border-sage/20 rounded-xl bg-cream/10">
+                  <div className="space-y-4">
+                    <Field label="Name" value={person.name} onChange={(val) => updateArrayField('leadership', 'items', index, 'name', val)} />
+                    <Field label="Role" value={person.role} onChange={(val) => updateArrayField('leadership', 'items', index, 'role', val)} />
+                    <Field label="Brief" textarea value={person.brief} onChange={(val) => updateArrayField('leadership', 'items', index, 'brief', val)} />
+                  </div>
+                  <div>
+                    <ImageUploadField 
+                      label="Upload Profile Photo" 
+                      currentImg={person.imgSrc}
+                      onUpload={(file) => {
+                        const safeName = file.name.toLowerCase().replace(/[^a-z0-9.]/g, '-');
+                        return handleImageUpload(file, `leader-${index}-${safeName}`, 'leadership').then(path => {
+                          updateArrayField('leadership', 'items', index, 'imgSrc', path);
+                        });
+                      }} 
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {activeTab === 'contact' && (
             <>
               <Field label="Section Title" value={data.contact.title} onChange={(val) => updateField('contact', 'title', val)} />
@@ -282,8 +418,6 @@ export default function App() {
               <Field label="Footer Text" value={data.contact.footer} onChange={(val) => updateField('contact', 'footer', val)} />
             </>
           )}
-
-          {/* Note: In a real complete app, we'd add tabs for Services, Products, etc. For this prototype, I'm just showing Hero, About, and Contact. */}
           
         </div>
       </div>
@@ -297,18 +431,73 @@ function Field({ label, value, onChange, textarea }) {
       <label className="block text-sm font-medium text-forest mb-2">{label}</label>
       {textarea ? (
         <textarea
-          value={value}
+          value={value || ''}
           onChange={(e) => onChange(e.target.value)}
           className="w-full px-4 py-3 border border-sage/30 rounded-lg focus:ring-2 focus:ring-mint focus:border-mint outline-none transition bg-cream/30 min-h-[120px]"
         />
       ) : (
         <input
           type="text"
-          value={value}
+          value={value || ''}
           onChange={(e) => onChange(e.target.value)}
           className="w-full px-4 py-3 border border-sage/30 rounded-lg focus:ring-2 focus:ring-mint focus:border-mint outline-none transition bg-cream/30"
         />
       )}
+    </div>
+  );
+}
+
+function ImageUploadField({ label, currentImg, onUpload }) {
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    setUploading(true);
+    try {
+      await onUpload(file);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const imgUrl = currentImg ? `https://zenithorionis.github.io/MCP${currentImg}` : null;
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-forest mb-2">{label}</label>
+      <div className="flex flex-col gap-3">
+        {imgUrl ? (
+          <div className="relative w-full aspect-video bg-sage/10 rounded-lg overflow-hidden border border-sage/20 flex items-center justify-center">
+            <img src={imgUrl} alt="Preview" className="max-w-full max-h-full object-contain" />
+          </div>
+        ) : (
+          <div className="w-full aspect-video bg-sage/10 rounded-lg border border-sage/20 border-dashed flex flex-col items-center justify-center text-sage">
+            <ImageIcon size={32} className="mb-2 opacity-50" />
+            <span className="text-sm">No image uploaded</span>
+          </div>
+        )}
+        
+        <label className="cursor-pointer bg-cream border border-forest text-forest px-4 py-2 rounded-lg text-sm font-medium hover:bg-forest hover:text-cream transition flex items-center justify-center gap-2">
+          {uploading ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
+          {uploading ? 'Uploading to GitHub...' : 'Choose New Image'}
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            disabled={uploading}
+          />
+        </label>
+      </div>
     </div>
   );
 }
