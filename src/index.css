@@ -1,6 +1,11 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-forest: #1A312C;
+  --color-sage: #428475;
+  --color-mint: #89D7B7;
+  --color-cream: #FFF4E1;
+}
 
 @layer base {
   body {
